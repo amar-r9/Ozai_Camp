@@ -1,5 +1,7 @@
 package com.app.ozaicamp;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
@@ -14,6 +16,7 @@ import android.content.ClipData;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
@@ -23,15 +26,24 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.preference.PreferenceManager;
 import android.provider.MediaStore;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.MenuItem;
+import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
+import com.app.ozaicamp.apiservice.Api;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
+import com.google.firebase.messaging.FirebaseMessaging;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -39,9 +51,13 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+
 public class MainActivity extends AppCompatActivity {
 
-    private static String file_type     = "*/*";
+    private static String file_type = "*/*";
     private String cam_file_data = null;
     private ValueCallback<Uri> file_data;
     private ValueCallback<Uri[]> file_path;
@@ -57,8 +73,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
-        if( ! CheckNetwork.isInternetAvailable(this)) //returns true if internet available
+        checkNotificationPermissions();
+        if (!CheckNetwork.isInternetAvailable(this)) //returns true if internet available
         {
             //if there is no internet do this
             setContentView(R.layout.activity_main);
@@ -76,9 +92,7 @@ public class MainActivity extends AppCompatActivity {
                     //.setNegativeButton("No", null)
                     .show();
 
-        }
-        else
-        {
+        } else {
             //Webview stuff
             webview = findViewById(R.id.home_webView);
             webview.getSettings().setJavaScriptEnabled(true);
@@ -86,11 +100,12 @@ public class MainActivity extends AppCompatActivity {
             webview.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
             webview.loadUrl(websiteURL);
             webview.setWebViewClient(new WebViewClientDemo());
+            webview.addJavascriptInterface(new WebviewInterface(), "JSInterface");
 
         }
 
         //Swipe to refresh functionality
-        mySwipeRefreshLayout = (SwipeRefreshLayout)this.findViewById(R.id.swipeContainer);
+        mySwipeRefreshLayout = (SwipeRefreshLayout) this.findViewById(R.id.swipeContainer);
 
         mySwipeRefreshLayout.setOnRefreshListener(
                 new SwipeRefreshLayout.OnRefreshListener() {
@@ -143,12 +158,12 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        webview.setWebChromeClient(new WebChromeClient(){
+        webview.setWebChromeClient(new WebChromeClient() {
 
             /*-- handling input[type="file"] requests for android API 21+ --*/
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
 
-                if(file_permission() && Build.VERSION.SDK_INT >= 21) {
+                if (file_permission() && Build.VERSION.SDK_INT >= 21) {
                     file_path = filePathCallback;
                     Intent takePictureIntent = null;
                     Intent takeVideoIntent = null;
@@ -253,8 +268,19 @@ public class MainActivity extends AppCompatActivity {
             }
 
 
-
         });
+
+        if (getIntent().getExtras() != null) {
+            for (String key : getIntent().getExtras().keySet()) {
+                Log.e("########Link", key);
+            }
+        }
+        if (getIntent().getStringExtra("link") != null) {
+            websiteURL = getIntent().getStringExtra("link");
+            Log.e("########Link", websiteURL);
+            if (webview != null)
+                webview.loadUrl(websiteURL);
+        }
 
     }
 
@@ -266,17 +292,43 @@ public class MainActivity extends AppCompatActivity {
             view.loadUrl(url);
             return true;
         }
+
         @Override
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
+            view.evaluateJavascript("javascript:window.localStorage.getItem('username')", new ValueCallback<String>() {
+                @Override
+                public void onReceiveValue(String s) {
+                    if (!TextUtils.isEmpty(s) && !s.equalsIgnoreCase("null")) {
+                        String username = s.replaceAll("\"", "");
+                        SharedPreferences pref = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
+                        SharedPreferences.Editor editor = pref.edit();
+                        editor.putString("userName", username);
+                        editor.apply();
+                        Log.e("########Cookie", s);
+                        if (!pref.getBoolean("isTokenUpdated", false)) {
+                            sendFCMTokenToServer(pref.getString("fcmToken", ""), username);
+                        }
+                    }
+
+                    if (url.contains("www.ozailiving.com/lct/adminlogout")) {
+                        SharedPreferences pref = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
+                        SharedPreferences.Editor editor = pref.edit();
+                        editor.putString("userName", "");
+                        editor.putBoolean("isTokenUpdated", false);
+                        editor.apply();
+                    }
+
+                }
+            });
             mySwipeRefreshLayout.setRefreshing(false);
         }
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent intent){
+    protected void onActivityResult(int requestCode, int resultCode, Intent intent) {
         super.onActivityResult(requestCode, resultCode, intent);
-        if(Build.VERSION.SDK_INT >= 21){
+        if (Build.VERSION.SDK_INT >= 21) {
             Uri[] results = null;
 
             /*-- if file request cancelled; exited camera. we need to send null value to make future attempts workable --*/
@@ -286,8 +338,8 @@ public class MainActivity extends AppCompatActivity {
             }
 
             /*-- continue if response is positive --*/
-            if(resultCode== Activity.RESULT_OK){
-                if(null == file_path){
+            if (resultCode == Activity.RESULT_OK) {
+                if (null == file_path) {
                     return;
                 }
                 ClipData clipData;
@@ -296,13 +348,13 @@ public class MainActivity extends AppCompatActivity {
                 try {
                     clipData = intent.getClipData();
                     stringData = intent.getDataString();
-                }catch (Exception e){
+                } catch (Exception e) {
                     clipData = null;
                     stringData = null;
                 }
                 if (clipData == null && stringData == null && cam_file_data != null) {
                     results = new Uri[]{Uri.parse(cam_file_data)};
-                }else{
+                } else {
                     if (clipData != null) {
                         final int numSelectedFiles = clipData.getItemCount();
                         results = new Uri[numSelectedFiles];
@@ -315,7 +367,8 @@ public class MainActivity extends AppCompatActivity {
                             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
                             cam_photo.compress(Bitmap.CompressFormat.JPEG, 100, bytes);
                             stringData = MediaStore.Images.Media.insertImage(this.getContentResolver(), cam_photo, null, null);
-                        }catch (Exception ignored){}
+                        } catch (Exception ignored) {
+                        }
 
                         results = new Uri[]{Uri.parse(stringData)};
                     }
@@ -324,9 +377,9 @@ public class MainActivity extends AppCompatActivity {
 
             file_path.onReceiveValue(results);
             file_path = null;
-        }else{
-            if(requestCode == file_req_code){
-                if(null == file_data) return;
+        } else {
+            if (requestCode == file_req_code) {
+                if (null == file_data) return;
                 Uri result = intent == null || resultCode != RESULT_OK ? null : intent.getData();
                 file_data.onReceiveValue(result);
                 file_data = null;
@@ -335,37 +388,34 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig){
+    public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
     }
 
-    public boolean file_permission(){
-        if(Build.VERSION.SDK_INT >=23 && (ContextCompat.checkSelfPermission(this, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)) {
+    public boolean file_permission() {
+        if (Build.VERSION.SDK_INT >= 23 && (ContextCompat.checkSelfPermission(this, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)) {
             ActivityCompat.requestPermissions(MainActivity.this, new String[]{android.Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.CAMERA}, 1);
             return false;
-        }else{
+        } else {
             return true;
         }
     }
 
-    private File create_image() throws IOException{
+    private File create_image() throws IOException {
         @SuppressLint("SimpleDateFormat") String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-        String imageFileName = "img_"+timeStamp+"_";
+        String imageFileName = "img_" + timeStamp + "_";
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-        return File.createTempFile(imageFileName,".jpg",storageDir);
+        return File.createTempFile(imageFileName, ".jpg", storageDir);
     }
 
 
     private File create_video() throws IOException {
         @SuppressLint("SimpleDateFormat")
-        String file_name    = new SimpleDateFormat("yyyy_mm_ss").format(new Date());
-        String new_name     = "file_"+file_name+"_";
-        File sd_directory   = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        String file_name = new SimpleDateFormat("yyyy_mm_ss").format(new Date());
+        String new_name = "file_" + file_name + "_";
+        File sd_directory = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         return File.createTempFile(new_name, ".3gp", sd_directory);
     }
-
-
-
 
 
     //set back button functionality
@@ -389,32 +439,128 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+
+    public void checkNotificationPermissions() {
+        // Declare the launcher at the top of your Activity/Fragment:
+        askNotificationPermission();
+
+    }
+
+    private void askNotificationPermission() {
+        // This is only necessary for API level >= 33 (TIRAMISU)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED) {
+                getFCMToken();
+            } else if (shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) {
+                // TODO: display an educational UI explaining to the user the features that will be enabled
+                //       by them granting the POST_NOTIFICATION permission. This UI should provide the user
+                //       "OK" and "No thanks" buttons. If the user selects "OK," directly request the permission.
+                //       If the user selects "No thanks," allow the user to continue without notifications.
+            } else {
+                // Directly ask for the permission
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS);
+            }
+        } else {
+            getFCMToken();
+        }
+    }
+
+    private final ActivityResultLauncher<String> requestPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
+                if (isGranted) {
+                    getFCMToken();
+                } else {
+                    // TODO: Inform user that that your app will not show notifications.
+                }
+            });
+
+    private void getFCMToken() {
+        SharedPreferences pref = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
+        if (TextUtils.isEmpty(pref.getString("fcmToken", ""))) {
+            FirebaseMessaging.getInstance().getToken()
+                    .addOnCompleteListener(new OnCompleteListener<String>() {
+                        @Override
+                        public void onComplete(@NonNull Task<String> task) {
+                            if (!task.isSuccessful()) {
+                                Log.w(TAG, "Fetching FCM registration token failed", task.getException());
+                                return;
+                            }
+
+                            // Get new FCM registration token
+                            String token = task.getResult();
+                            SharedPreferences pref = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
+                            SharedPreferences.Editor editor = pref.edit();
+                            editor.putString("fcmToken", token);
+                            editor.apply();
+                            // Log and toast
+                            // String msg = getString(R.string.msg_token_fmt, token);
+                            Log.d("######## fcmToken", token);
+                        }
+                    });
+
+        } else {
+
+        }
+    }
+
+    private void sendFCMTokenToServer(String fcmToken, String sessionId) {
+
+        Api.getClient().postFCMToken(sessionId, fcmToken).enqueue(new Callback<String>() {
+            @Override
+            public void onResponse(Call<String> call, Response<String> response) {
+                if (response.body().toString().equals("success")) {
+                    SharedPreferences pref = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
+                    SharedPreferences.Editor editor = pref.edit();
+                    editor.putBoolean("isTokenUpdated", true);
+                    editor.apply();
+                }
+            }
+
+            @Override
+            public void onFailure(Call<String> call, Throwable t) {
+//                SharedPreferences pref = PreferenceManager.getDefaultSharedPreferences(MainActivity.this);
+//                SharedPreferences.Editor editor = pref.edit();
+//                editor.putBoolean("isTokenUpdated", true);
+//                editor.apply();
+            }
+        });
+
+
+    }
+    public class WebviewInterface {
+        @JavascriptInterface
+        public void openInBrowser(String url) {
+            Log.i(TAG, url);
+            if(!TextUtils.isEmpty(url)){
+                if (!url.startsWith("https://") && !url.startsWith("http://")){
+                    url = "http://" + url;
+                }
+                Intent openUrlIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                startActivity(openUrlIntent);
+            }
+        }
+    }
+
 }
 
 class CheckNetwork {
 
     private static final String TAG = CheckNetwork.class.getSimpleName();
 
-    public static boolean isInternetAvailable(Context context)
-    {
+    public static boolean isInternetAvailable(Context context) {
         NetworkInfo info = (NetworkInfo) ((ConnectivityManager)
                 context.getSystemService(Context.CONNECTIVITY_SERVICE)).getActiveNetworkInfo();
 
-        if (info == null)
-        {
-            Log.d(TAG,"no internet connection");
+        if (info == null) {
+            Log.d(TAG, "no internet connection");
             return false;
-        }
-        else
-        {
-            if(info.isConnected())
-            {
-                Log.d(TAG," internet connection available...");
+        } else {
+            if (info.isConnected()) {
+                Log.d(TAG, " internet connection available...");
                 return true;
-            }
-            else
-            {
-                Log.d(TAG," internet connection");
+            } else {
+                Log.d(TAG, " internet connection");
                 return true;
             }
 

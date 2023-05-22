@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Ozai Camp</string>
+
+    <string name="default_notification_channel_id">OzaiCamp</string>
 </resources>
