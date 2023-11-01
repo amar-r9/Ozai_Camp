@@ -27,7 +27,7 @@
             android:name=".Properties"
             android:exported="false" />
         <activity
-            android:name=".Services"
+            android:name=".Expenses"
             android:exported="false" />
         <activity
             android:name=".Tickets"

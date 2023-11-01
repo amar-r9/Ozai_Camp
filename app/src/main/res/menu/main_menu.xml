@@ -16,9 +16,9 @@
         android:icon="@drawable/ic_baseline_view_list_24"/>
 
     <item
-        android:id="@+id/services"
-        android:title="Services"
-        android:icon="@drawable/ic_baseline_local_offer_24"/>
+        android:id="@+id/expenses"
+        android:title="Expenses"
+        android:icon="@drawable/ic_baseline_account_balance_wallet_24"/>
 
     <item
         android:id="@+id/tickets"

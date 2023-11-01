@@ -16,7 +16,7 @@ import com.google.android.material.bottomnavigation.BottomNavigationView;
 
 public class Residents extends AppCompatActivity {
 
-    String websiteURL = "http://www.ozailiving.com/lct/residents/list"; // sets web url
+    String websiteURL = "https://www.ozailiving.com/lct/residents/list"; // sets web url
     private WebView webview;
     SwipeRefreshLayout mySwipeRefreshLayout;
 
@@ -94,9 +94,9 @@ public class Residents extends AppCompatActivity {
                         overridePendingTransition(0, 0);
                         return true;
 
-                    case R.id.services:
+                    case R.id.expenses:
                         startActivity(new Intent(getApplication()
-                                , Services.class));
+                                , Expenses.class));
                         overridePendingTransition(0, 0);
                         return true;
 
